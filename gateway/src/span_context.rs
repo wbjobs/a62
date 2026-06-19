@@ -1,29 +1,42 @@
 use std::time::{Duration, Instant};
 
 use crate::timeout_budget::TimeoutBudget;
+use crate::trace_sampler::{SamplingReason, TRACE_ID_HEADER, SAMPLED_HEADER};
 use crate::types::{ClusterType, CANARY_HEADER, CANARY_CLUSTER_HEADER};
 
 #[derive(Debug, Clone)]
 pub struct SpanContext {
+    pub trace_id: String,
     pub request_id: String,
     pub timeout_budget: TimeoutBudget,
     pub is_canary: bool,
     pub cluster_type: Option<ClusterType>,
+    pub sampled: bool,
+    pub sampling_reason: SamplingReason,
     pub created_at: Instant,
 }
 
 impl SpanContext {
     pub fn new(request_id: String, total_budget_ms: u64) -> Self {
         Self {
+            trace_id: generate_trace_id(),
             request_id,
             timeout_budget: TimeoutBudget::new(total_budget_ms),
             is_canary: false,
             cluster_type: None,
+            sampled: false,
+            sampling_reason: SamplingReason::NotSampled,
             created_at: Instant::now(),
         }
     }
 
     pub fn from_headers(headers: &http::HeaderMap, default_budget_ms: u64) -> Self {
+        let trace_id = headers
+            .get(TRACE_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| generate_trace_id());
+
         let request_id = headers
             .get("x-request-id")
             .and_then(|v| v.to_str().ok())
@@ -48,13 +61,35 @@ impl SpanContext {
                 _ => None,
             });
 
+        let sampled = headers
+            .get(SAMPLED_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        let sampling_reason = if sampled {
+            SamplingReason::HeaderForced
+        } else {
+            SamplingReason::NotSampled
+        };
+
         Self {
+            trace_id,
             request_id,
             timeout_budget,
             is_canary,
             cluster_type,
+            sampled,
+            sampling_reason,
             created_at: Instant::now(),
         }
+    }
+
+    pub fn with_sampling(mut self, sampled: bool, reason: SamplingReason, trace_id: String) -> Self {
+        self.sampled = sampled;
+        self.sampling_reason = reason;
+        self.trace_id = trace_id;
+        self
     }
 
     pub fn remaining_budget(&self) -> Duration {
@@ -77,7 +112,16 @@ impl SpanContext {
         self.cluster_type = Some(cluster);
     }
 
+    pub fn set_sampled(&mut self, sampled: bool, reason: SamplingReason) {
+        self.sampled = sampled;
+        self.sampling_reason = reason;
+    }
+
     pub fn inject_headers(&self, headers: &mut http::HeaderMap) {
+        if let Ok(value) = http::HeaderValue::from_str(&self.trace_id) {
+            headers.insert(TRACE_ID_HEADER, value);
+        }
+
         if let Ok(value) = http::HeaderValue::from_str(&self.request_id) {
             headers.insert("x-request-id", value);
         }
@@ -91,6 +135,9 @@ impl SpanContext {
                 headers.insert(CANARY_CLUSTER_HEADER, value);
             }
         }
+
+        let sampled_value = if self.sampled { "1" } else { "0" };
+        headers.insert(SAMPLED_HEADER, http::HeaderValue::from_static(sampled_value));
 
         self.timeout_budget.inject_header(headers);
     }
@@ -107,6 +154,13 @@ impl SpanContext {
 }
 
 fn generate_request_id() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex_encode(&bytes)
+}
+
+fn generate_trace_id() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
@@ -193,10 +247,17 @@ mod tests {
         let mut ctx = SpanContext::new("test-id".to_string(), 5000);
         ctx.is_canary = true;
         ctx.cluster_type = Some(ClusterType::Canary);
+        ctx.sampled = true;
+        ctx.sampling_reason = SamplingReason::CanaryForced;
+        ctx.trace_id = "trace-123".to_string();
 
         let mut headers = http::HeaderMap::new();
         ctx.inject_headers(&mut headers);
 
+        assert_eq!(
+            headers.get("x-trace-id").and_then(|v| v.to_str().ok()),
+            Some("trace-123")
+        );
         assert_eq!(
             headers.get("x-request-id").and_then(|v| v.to_str().ok()),
             Some("test-id")
@@ -208,6 +269,10 @@ mod tests {
         assert_eq!(
             headers.get(CANARY_CLUSTER_HEADER).and_then(|v| v.to_str().ok()),
             Some("canary")
+        );
+        assert_eq!(
+            headers.get("x-trace-sampled").and_then(|v| v.to_str().ok()),
+            Some("1")
         );
     }
 

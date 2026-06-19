@@ -21,6 +21,12 @@ http.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
+regex = "1.10"
+twox-hash = "1.6"
+crossbeam = "0.8"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[bin]]
 name = "gateway"

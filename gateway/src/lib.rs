@@ -8,3 +8,6 @@ pub mod admin_api;
 pub mod types;
 pub mod grpc_metadata;
 pub mod span_context;
+pub mod trace_sampler;
+pub mod trace_record;
+pub mod async_logger;
