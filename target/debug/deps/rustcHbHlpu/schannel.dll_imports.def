@@ -1,0 +1,10 @@
+EXPORTS
+SslCrackCertificate
+SslDeserializeCertificateStore
+SslEmptyCacheA
+SslEmptyCacheW
+SslFreeCertificate
+SslGenerateRandomBits
+SslGetExtensions
+SslGetMaximumKeySize
+SslGetServerIdentity

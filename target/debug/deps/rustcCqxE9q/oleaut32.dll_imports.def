@@ -1,0 +1,11 @@
+EXPORTS
+SysAddRefString
+SysAllocString
+SysAllocStringByteLen
+SysAllocStringLen
+SysFreeString
+SysReAllocString
+SysReAllocStringLen
+SysReleaseString
+SysStringByteLen
+SysStringLen

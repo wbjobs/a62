@@ -1,0 +1,5 @@
+EXPORTS
+SLAcquireGenuineTicket
+SLActivateProduct
+SLGetReferralInformation
+SLGetServerStatus

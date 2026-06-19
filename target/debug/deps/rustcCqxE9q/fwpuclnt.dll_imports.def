@@ -1,0 +1,7 @@
+EXPORTS
+WSADeleteSocketPeerTargetName
+WSAImpersonateSocketPeer
+WSAQuerySocketSecurity
+WSARevertImpersonation
+WSASetSocketPeerTargetName
+WSASetSocketSecurity

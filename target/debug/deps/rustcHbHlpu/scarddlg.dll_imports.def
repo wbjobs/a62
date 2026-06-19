@@ -1,0 +1,4 @@
+EXPORTS
+GetOpenCardNameA
+GetOpenCardNameW
+SCardDlgExtendedError

@@ -1,0 +1,12 @@
+EXPORTS
+CopyFileFromAppW
+CreateDirectoryFromAppW
+CreateFile2FromAppW
+CreateFileFromAppW
+DeleteFileFromAppW
+FindFirstFileExFromAppW
+GetFileAttributesExFromAppW
+MoveFileFromAppW
+RemoveDirectoryFromAppW
+ReplaceFileFromAppW
+SetFileAttributesFromAppW

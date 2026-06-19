@@ -1,0 +1,14 @@
+EXPORTS
+BindImage
+BindImageEx
+CheckSumMappedFile
+ImageEnumerateCertificates
+ImageGetDigestStream
+ImageRemoveCertificate
+MapFileAndCheckSumA
+MapFileAndCheckSumW
+ReBaseImage
+ReBaseImage64
+TouchFileTimes
+UpdateDebugInfoFile
+UpdateDebugInfoFileEx

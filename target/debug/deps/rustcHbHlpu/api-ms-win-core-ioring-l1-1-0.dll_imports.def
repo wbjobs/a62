@@ -1,0 +1,13 @@
+EXPORTS
+BuildIoRingCancelRequest
+BuildIoRingReadFile
+BuildIoRingRegisterBuffers
+BuildIoRingRegisterFileHandles
+CloseIoRing
+CreateIoRing
+GetIoRingInfo
+IsIoRingOpSupported
+PopIoRingCompletion
+QueryIoRingCapabilities
+SetIoRingCompletionEvent
+SubmitIoRing

@@ -1,0 +1,15 @@
+EXPORTS
+AcceptEx
+EnumProtocolsA
+EnumProtocolsW
+GetAcceptExSockaddrs
+GetAddressByNameA
+GetAddressByNameW
+GetNameByTypeA
+GetNameByTypeW
+GetServiceA
+GetServiceW
+GetTypeByNameA
+GetTypeByNameW
+TransmitFile
+WSARecvEx
