@@ -10,30 +10,50 @@ use axum::{
 use http_body_util::BodyExt;
 
 use crate::state::AppState;
-use crate::timeout_budget::TimeoutBudget;
+use crate::span_context::{SpanContext, with_span_context};
 use crate::traffic_coloring::propagate_canary_headers;
 
 pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     Path(service_name): Path<String>,
-    mut req: Request<Body>,
+    req: Request<Body>,
+) -> Result<Response<Body>, StatusCode> {
+    let _service_config = state
+        .get_service(&service_name)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let span = SpanContext::from_headers(req.headers(), state.global_timeout_ms());
+
+    with_span_context(span, || async move {
+        proxy_inner(state, service_name, req).await
+    })
+    .await
+}
+
+async fn proxy_inner(
+    state: Arc<AppState>,
+    service_name: String,
+    req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
     let service_config = state
         .get_service(&service_name)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let (budget, _from_header) =
-        TimeoutBudget::from_header_or_new(req.headers(), state.global_timeout_ms());
+    let span = crate::span_context::get_span_context();
 
-    if budget.is_expired() {
-        tracing::warn!("Timeout budget exhausted before routing");
+    if span.is_budget_expired() {
+        tracing::warn!(
+            request_id = %span.request_id,
+            "Timeout budget exhausted before routing"
+        );
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    if !budget.has_enough_budget(service_config.timeout()) {
+    if !span.has_enough_budget(service_config.timeout()) {
         tracing::warn!(
+            request_id = %span.request_id,
             "Insufficient timeout budget: remaining={}ms, required={}ms",
-            budget.remaining_ms(),
+            span.remaining_budget_ms(),
             service_config.timeout_ms
         );
         return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -44,27 +64,39 @@ pub async fn proxy_handler(
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if !cb.allow_request() {
-        tracing::warn!("Circuit breaker open for service: {}", service_name);
+        tracing::warn!(
+            request_id = %span.request_id,
+            "Circuit breaker open for service: {}",
+            service_name
+        );
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    let req_headers = req.headers().clone();
     let route_target =
         state
             .traffic_colorer
-            .determine_route(&service_name, req.headers(), &service_config);
+            .determine_route(&service_name, &req_headers, &service_config);
 
     tracing::debug!(
+        request_id = %span.request_id,
         "Routing to service={}, cluster={}, endpoint={}",
         service_name,
         route_target.cluster_type,
         route_target.endpoint
     );
 
+    crate::span_context::update_span_context(|ctx| {
+        ctx.set_cluster_type(route_target.cluster_type);
+    });
+
+    let mut req = req;
     let headers = req.headers_mut();
     state
         .traffic_colorer
         .inject_canary_headers(headers, route_target.cluster_type);
-    budget.inject_header(headers);
+    let span = crate::span_context::get_span_context();
+    span.inject_headers(headers);
 
     let uri_path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/");
     let target_url = format!("{}{}", route_target.endpoint, uri_path);
@@ -72,7 +104,7 @@ pub async fn proxy_handler(
     let method = req.method().clone();
     let mut proxy_headers = HeaderMap::new();
     propagate_canary_headers(req.headers(), &mut proxy_headers);
-    budget.inject_header(&mut proxy_headers);
+    span.inject_headers(&mut proxy_headers);
 
     for (key, value) in req.headers().iter() {
         if !proxy_headers.contains_key(key) {
@@ -89,7 +121,7 @@ pub async fn proxy_handler(
 
     let start_time = Instant::now();
 
-    let remaining_budget = budget.remaining();
+    let remaining_budget = span.remaining_budget();
     let request_timeout = std::cmp::min(service_config.timeout(), remaining_budget);
 
     let proxy_request = state
@@ -110,6 +142,7 @@ pub async fn proxy_handler(
             if status.is_server_error() {
                 cb.record_error(duration);
                 tracing::warn!(
+                    request_id = %span.request_id,
                     "Backend error for service {}: status={}, duration={:?}",
                     service_name,
                     status,
@@ -118,6 +151,7 @@ pub async fn proxy_handler(
             } else {
                 cb.record_success(duration);
                 tracing::debug!(
+                    request_id = %span.request_id,
                     "Request to {} succeeded: status={}, duration={:?}",
                     service_name,
                     status,
@@ -132,7 +166,11 @@ pub async fn proxy_handler(
             }
 
             let body = resp.bytes().await.map_err(|e| {
-                tracing::error!("Failed to read response body: {}", e);
+                tracing::error!(
+                    request_id = %span.request_id,
+                    "Failed to read response body: {}",
+                    e
+                );
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
@@ -146,10 +184,20 @@ pub async fn proxy_handler(
             cb.record_error(duration);
 
             if e.is_timeout() {
-                tracing::warn!("Request to {} timed out after {:?}", service_name, duration);
+                tracing::warn!(
+                    request_id = %span.request_id,
+                    "Request to {} timed out after {:?}",
+                    service_name,
+                    duration
+                );
                 Err(StatusCode::GATEWAY_TIMEOUT)
             } else {
-                tracing::error!("Request to {} failed: {}", service_name, e);
+                tracing::error!(
+                    request_id = %span.request_id,
+                    "Request to {} failed: {}",
+                    service_name,
+                    e
+                );
                 Err(StatusCode::BAD_GATEWAY)
             }
         }

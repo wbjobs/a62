@@ -7,3 +7,4 @@ pub mod proxy;
 pub mod admin_api;
 pub mod types;
 pub mod grpc_metadata;
+pub mod span_context;
